@@ -24,12 +24,12 @@
      CẤU HÌNH TÀI KHOẢN NHẬN TIỀN — SỬA Ở ĐÂY
      ====================================================================== */
       const CONFIG = {
-        merchantName: "Chuyển khoản Viên Mãn", // Tên cửa hàng / hiển thị trên đầu trang
+        merchantName: "CK Mãn Ma", // Tên cửa hàng / hiển thị trên đầu trang
         accountName: "MA NGUYEN VIEN MAN", // Tên chủ tài khoản (KHÔNG DẤU, IN HOA — đúng như sao kê ngân hàng)
         accountNo: "0938075655", // Số tài khoản nhận tiền
         bankCode: "BIDV", // Mã ngân hàng viết tắt (VD: MB, VCB, TCB, ICB, BIDV, ACB, TPB, VPB...)
         bankBin: "970418", // Mã BIN ngân hàng tương ứng (tra tại https://api.vietqr.io/v2/banks)
-        bankDisplay: "(BIDV) Ngân hàng TMCP Đầu tư và Phát triển Việt Nam ", // Tên ngân hàng hiển thị cho người dùng
+        bankDisplay: "(BIDV) Ngân hàng TMCP Đầu tư và Phát triển Việt Nam", // Tên ngân hàng hiển thị cho người dùng
         defaultNote: "Thanh toan", // Nội dung chuyển khoản mặc định (người dùng có thể sửa)
         maskAccount: true, // true = che bớt số tài khoản khi hiển thị (vẫn dùng đủ số khi thanh toán)
       };
@@ -147,8 +147,9 @@
         <div class="sheet-handle" aria-hidden="true"></div>
         <h2 class="sheet-title">Chọn app ngân hàng của bạn</h2>
         <p class="sheet-sub">
-          App có dấu <strong>✓</strong> sẽ tự điền sẵn số tiền &amp; nội dung.
-          App khác vẫn mở được — nội dung sẽ được sao chép sẵn để bạn dán vào.
+          App có dấu <strong>✓</strong> thường tự điền sẵn số tiền &amp; nội
+          dung. Nếu app báo không nhận diện được, hãy dùng "Dán để giao dịch" —
+          thông tin đã được sao chép sẵn.
         </p>
         <input
           id="bankSearch"
@@ -840,7 +841,12 @@
             return;
           }
           list.forEach((b) => {
-            const supportsAutofill = autofillMap[b.code.toLowerCase()] === true;
+            const codeLower = b.code.toLowerCase();
+            const hasDeeplink = Object.prototype.hasOwnProperty.call(
+              autofillMap,
+              codeLower,
+            );
+            const supportsAutofill = autofillMap[codeLower] === true;
             const btn = document.createElement("button");
             btn.className = "bank-item";
             btn.type = "button";
@@ -859,17 +865,37 @@
               }
               const note = currentNote();
 
-              // Dự phòng: sao chép sẵn nội dung vào clipboard, phòng khi app không tự điền được
-              const fallbackText = `${fmt.format(Number(amount))} - ${stripDiacritics(note)}`;
+              // Dự phòng: sao chép sẵn ĐẦY ĐỦ thông tin thụ hưởng vào clipboard.
+              // Nhiều app (vd BIDV) không parse được tham số trong deeplink và báo
+              // "không nhận diện được thông tin thụ hưởng" — nhưng lại có tính năng
+              // "Dán để giao dịch" đọc trực tiếp từ clipboard, nên ta chuẩn bị sẵn
+              // một đoạn text đầy đủ: ngân hàng, số tài khoản, tên, số tiền, nội dung.
+              const fallbackText =
+                `${CONFIG.bankDisplay} - STK ${CONFIG.accountNo} - ${stripDiacritics(CONFIG.accountName)} - ` +
+                `So tien ${fmt.format(Number(amount))} - Noi dung: ${stripDiacritics(note)}`;
               try {
                 await navigator.clipboard.writeText(fallbackText);
               } catch (e) {
                 /* im lặng bỏ qua */
               }
 
-              if (!supportsAutofill) {
-                toast("Đã copy nội dung — dán vào nếu app chưa tự điền");
+              // Ví điện tử (MoMo, ZaloPay, VNPAY...) hoặc app chưa có deeplink trên VietQR
+              // sẽ không mở được qua dl.vietqr.io — chuyển sang hiện QR để quét trong app đó.
+              if (!hasDeeplink) {
+                closeSheet();
+                toast(
+                  `${b.name} chưa hỗ trợ mở nhanh — quét mã QR bên dưới trong app`,
+                );
+                $("qrImg").src = buildQrUrl(amount, note);
+                $("qrAmount").textContent = fmt.format(Number(amount)) + " ₫";
+                qrOverlay.classList.remove("hidden");
+                qrOverlay.classList.add("qr-overlay-center");
+                return;
               }
+
+              toast(
+                "Đã copy thông tin chuyển khoản — dùng 'Dán để giao dịch' nếu app không tự nhận diện",
+              );
 
               const link = buildDeeplink(b.code, amount, note);
               window.location.href = link;
