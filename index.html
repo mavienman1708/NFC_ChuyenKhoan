@@ -24,12 +24,12 @@
      CẤU HÌNH TÀI KHOẢN NHẬN TIỀN — SỬA Ở ĐÂY
      ====================================================================== */
       const CONFIG = {
-        merchantName: "Chuyển Khoản Mãn Ma", // Tên cửa hàng / hiển thị trên đầu trang
+        merchantName: "Chuyển khoản Viên Mãn", // Tên cửa hàng / hiển thị trên đầu trang
         accountName: "MA NGUYEN VIEN MAN", // Tên chủ tài khoản (KHÔNG DẤU, IN HOA — đúng như sao kê ngân hàng)
         accountNo: "0938075655", // Số tài khoản nhận tiền
         bankCode: "BIDV", // Mã ngân hàng viết tắt (VD: MB, VCB, TCB, ICB, BIDV, ACB, TPB, VPB...)
         bankBin: "970418", // Mã BIN ngân hàng tương ứng (tra tại https://api.vietqr.io/v2/banks)
-        bankDisplay: "BIDV Bank", // Tên ngân hàng hiển thị cho người dùng
+        bankDisplay: "(BIDV) Ngân hàng TMCP Đầu tư và Phát triển Việt Nam ", // Tên ngân hàng hiển thị cho người dùng
         defaultNote: "Thanh toan", // Nội dung chuyển khoản mặc định (người dùng có thể sửa)
         maskAccount: true, // true = che bớt số tài khoản khi hiển thị (vẫn dùng đủ số khi thanh toán)
       };
@@ -147,7 +147,8 @@
         <div class="sheet-handle" aria-hidden="true"></div>
         <h2 class="sheet-title">Chọn app ngân hàng của bạn</h2>
         <p class="sheet-sub">
-          Ứng dụng sẽ mở sẵn với số tiền và nội dung đã điền
+          App có dấu <strong>✓</strong> sẽ tự điền sẵn số tiền &amp; nội dung.
+          App khác vẫn mở được — nội dung sẽ được sao chép sẵn để bạn dán vào.
         </p>
         <input
           id="bankSearch"
@@ -527,12 +528,31 @@
       .bank-item:active {
         background: #eaf0ec;
       }
+      .bank-logo-wrap {
+        position: relative;
+      }
       .bank-item img {
         width: 36px;
         height: 36px;
         object-fit: contain;
         border-radius: 8px;
         background: #fff;
+      }
+      .autofill-badge {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        background: var(--ink);
+        color: #fff;
+        font-size: 9px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 2px solid var(--paper-card);
       }
       .bank-item span {
         font-size: 10px;
@@ -649,6 +669,18 @@
           return v || CONFIG.defaultNote;
         }
 
+        // Nội dung chuyển khoản theo chuẩn Napas cần KHÔNG DẤU — nhiều app ngân hàng
+        // (vd BIDV) không tự điền được nếu nội dung còn dấu tiếng Việt.
+        function stripDiacritics(str) {
+          return (str || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/Đ/g, "D")
+            .replace(/[^a-zA-Z0-9 ]/g, "")
+            .trim();
+        }
+
         // ---------- render tài khoản ----------
         function renderAccount() {
           $("merchantName").textContent = CONFIG.merchantName;
@@ -695,8 +727,8 @@
         function buildQrUrl(amount, note) {
           const p = new URLSearchParams({
             amount: amount,
-            addInfo: note,
-            accountName: CONFIG.accountName,
+            addInfo: stripDiacritics(note),
+            accountName: stripDiacritics(CONFIG.accountName),
           });
           return `https://img.vietqr.io/image/${CONFIG.bankBin}-${CONFIG.accountNo}-compact2.png?${p.toString()}`;
         }
@@ -707,8 +739,8 @@
             app: appCode.toLowerCase(),
             ba: `${CONFIG.accountNo}@${CONFIG.bankCode.toLowerCase()}`,
             am: amount,
-            tn: note,
-            bn: CONFIG.accountName,
+            tn: stripDiacritics(note),
+            bn: stripDiacritics(CONFIG.accountName),
           });
           return `https://dl.vietqr.io/pay?${p.toString()}`;
         }
@@ -723,6 +755,24 @@
         // ---------- bottom sheet chọn ngân hàng ----------
         const sheetOverlay = $("sheetOverlay");
         let banksCache = [];
+        let autofillMap = {}; // appId (lowercase) -> true/false, lấy trực tiếp từ VietQR
+
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+        async function loadAutofillMap() {
+          try {
+            const url = isIOS
+              ? "https://api.vietqr.io/v2/ios-app-deeplinks"
+              : "https://api.vietqr.io/v2/android-app-deeplinks";
+            const res = await fetch(url);
+            const json = await res.json();
+            (json.apps || []).forEach((a) => {
+              autofillMap[a.appId.toLowerCase()] = !!a.autofill;
+            });
+          } catch (e) {
+            // Không lấy được thì thôi, chỉ đơn giản là không hiện badge — app vẫn hoạt động bình thường
+          }
+        }
 
         const FALLBACK_BANKS = [
           { name: "MBBank", code: "MB", bin: "970422" },
@@ -790,18 +840,37 @@
             return;
           }
           list.forEach((b) => {
+            const supportsAutofill = autofillMap[b.code.toLowerCase()] === true;
             const btn = document.createElement("button");
             btn.className = "bank-item";
             btn.type = "button";
             btn.setAttribute("role", "listitem");
-            btn.innerHTML = `<img src="${b.logo}" alt="${b.name}" loading="lazy" onerror="this.style.visibility='hidden'"><span>${b.name}</span>`;
-            btn.addEventListener("click", () => {
+            btn.innerHTML = `
+        <div class="bank-logo-wrap">
+          <img src="${b.logo}" alt="${b.name}" loading="lazy" onerror="this.style.visibility='hidden'">
+          ${supportsAutofill ? '<span class="autofill-badge" title="Tự động điền thông tin">✓</span>' : ""}
+        </div>
+        <span>${b.name}</span>`;
+            btn.addEventListener("click", async () => {
               const amount = validateAmount();
               if (!amount) {
                 closeSheet();
                 return;
               }
               const note = currentNote();
+
+              // Dự phòng: sao chép sẵn nội dung vào clipboard, phòng khi app không tự điền được
+              const fallbackText = `${fmt.format(Number(amount))} - ${stripDiacritics(note)}`;
+              try {
+                await navigator.clipboard.writeText(fallbackText);
+              } catch (e) {
+                /* im lặng bỏ qua */
+              }
+
+              if (!supportsAutofill) {
+                toast("Đã copy nội dung — dán vào nếu app chưa tự điền");
+              }
+
               const link = buildDeeplink(b.code, amount, note);
               window.location.href = link;
             });
@@ -851,7 +920,7 @@
 
         // ---------- init ----------
         renderAccount();
-        loadBanks().then(() => {
+        Promise.all([loadBanks(), loadAutofillMap()]).then(() => {
           if (!sheetOverlay.classList.contains("hidden")) renderBankGrid("");
         });
       })();
